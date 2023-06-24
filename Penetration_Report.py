@@ -56,7 +56,7 @@ def main():
     parse_dates = ['CreatedOn1', 'Serviceable_Date1', 'ServiceLocationCreatedBy1', 'Account_Service_Activation_Date1',
                    'Account_Service_Deactivation_Date1']
 
-    full_report = pd.DataFrame(columns=['Project_Name', 'Market', 'Market Type', 'Serviceable Date', 'CRM Addresses',
+    full_report = pd.DataFrame(columns=['Project_Name', 'Market', 'Serviceable Date', 'CRM Addresses',
                                         'Competitive Addresses', 'Underserved Addresses', 'Hybrid Addresses', 'Total Serviceable Addresses',
                                         'Competitive Customers', 'Underserved Customers', 'Hybrid Customers', 'Total Active Customers'])
 
@@ -110,9 +110,9 @@ def main():
         hybrid_addresses = addresses_by_type.loc[((addresses_by_type.Serviceability2 == 1) & (addresses_by_type['Mapped Market Type'] == 'Hybrid'))]
         hybrid_addresses = hybrid_addresses.drop(['Serviceability2', 'Mapped Market Type'], axis=1)
         hybrid_addresses.rename(columns={"Project_Name": "Project_Name",
-                                              "Market": "Market",
-                                              0: "Hybrid Addresses"},
-                                     inplace=True)
+                                         "Market": "Market",
+                                         0: "Hybrid Addresses"},
+                                inplace=True)
 
         customers_by_type = omnia_data.groupby(['Project_Name', 'Market', 'Serviceability2', 'Mapped Market Type',
                                                 'Deactivated'])['Account_Service_Activation_Date1'].count().reset_index()
@@ -139,9 +139,9 @@ def main():
                                                        (customers_by_type.Deactivated == False))]
         hybrid_customers = hybrid_customers.drop(['Serviceability2', 'Deactivated', 'Mapped Market Type'], axis=1)
         hybrid_customers.rename(columns={"Project_Name": "Project_Name",
-                                              "Market": "Market",
-                                              'Account_Service_Activation_Date1': "Hybrid Customers"},
-                                     inplace=True)
+                                         "Market": "Market",
+                                         'Account_Service_Activation_Date1': "Hybrid Customers"},
+                                inplace=True)
 
         report_df = report_df.merge(CRM_addresses)
         report_df = report_df.merge(competitive_addresses, how='left')
@@ -193,59 +193,17 @@ def main():
     # fill gaps with most recent data point
     # or could just look for date one month out and if it's not there just take most recent one
 
-    """
-    tester = cleaned_full_report[cleaned_full_report['Mapped Market'] == 'HAG'].copy()
-    tester['Source File'] = pd.to_datetime(tester['Source File'])
-    tester['Mapped Serv Date'] = pd.to_datetime(tester['Mapped Serv Date'])
-    tester['Month Offset'] = tester['Source File'].dt.to_period('M').view(dtype='int64') - tester['Mapped Serv Date'].dt.to_period('M').view(dtype='int64')
-    tester = tester.drop_duplicates(subset=['Mapped Projects', 'Month Offset'], keep='first')
-
-    with sns.axes_style("whitegrid"):
-        fig, ax = plt.subplots(figsize=(12, 6))
-        graph = sns.lineplot(data=tester, x='Month Offset', y='Total Penetration', hue='Mapped Projects')
-        sns.move_legend(graph, "upper left", bbox_to_anchor=(1.04, 1), ncol=1)
-        plt.subplots_adjust(right=0.7)
-        plt.setp(graph.get_legend().get_texts(), fontsize='7')
-        graph.set_ylim(0, 0.5)
-
-    # add count of passings
-    # output biggest projects (maybe 80% of passings?)
-    # clean the biggest
-
-
-    # Plot multiple lines
-    for project, group in tester.groupby("Mapped Projects"):
-        graph = sns.lineplot(group['Month Offset'], group['Total Penetration'], label=project)
-
-    # Add titles
-    plt.xlabel("Months")
-    plt.ylabel("Penetration")
-
-    # Show the graph
-    plt.show()
-    """
-
 
 def define_market(wcregion):
     if wcregion == 'Inactive':
         return 'Inactive'
-    elif wcregion == 'Virginia':
-        return 'VATN'
     elif wcregion == '':
         return 'Unknown'
-    elif wcregion[:3] == 'BRI':
+    elif wcregion[:3] in ['Virginia', 'BRI', 'CPC', 'DUF']:
         return 'VATN'
-    elif wcregion[:3] == 'CPC':
-        return 'VATN'
-    elif wcregion[:3] == 'DUF':
-        return 'VATN'
-    elif wcregion[:3] == 'BLD':
+    elif wcregion[:3] in ['BLD', 'ISL', 'NFL']:
         return 'Island'
-    elif wcregion[:3] == 'SWG':
-        return 'ALAGA'
-    elif wcregion[:3] == 'TAL':
-        return 'ALAGA'
-    elif wcregion[:3] == 'ALA':
+    elif wcregion[:3] in ['SWG', 'TAL', 'ALA', 'OPL']:
         return 'ALAGA'
     elif wcregion[:3] == 'HAG':
         return 'HAG'
@@ -255,14 +213,8 @@ def define_market(wcregion):
         return 'OHIO'
     elif wcregion[:3] == 'NGA':
         return 'NWGA'
-    elif wcregion[:3] == 'ISL':
-        return 'Island'
     elif wcregion[:3] == 'NYK':
         return 'NY'
-    elif wcregion[:3] == 'OPL':
-        return 'ALAGA'
-    elif wcregion[:3] == 'NFL':
-        return 'Island'
     elif wcregion[:3] == 'WMI':
         return 'WMICH'
     elif wcregion[:3] == 'NGN':
