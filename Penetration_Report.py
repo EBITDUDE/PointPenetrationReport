@@ -3,17 +3,14 @@ import math
 import pandas as pd
 import numpy as np
 from datetime import datetime
-import matplotlib.pyplot as plt
 import time
-from dateutil.relativedelta import relativedelta
-import seaborn as sns
 
 RAW_DATA_PATH = "C:/Users/alexander.bennett/PycharmProjects/Point Penetration Report/~raw_data/~from_Box_ASB_rename/"
 MAPPINGS_PATH = "C:/Users/alexander.bennett/PycharmProjects/Point Penetration Report/~raw_data/"
 SAVE_PATH = "C:/Users/alexander.bennett/PycharmProjects/Point Penetration Report/~outputs/"
 
 pd.set_option('display.max_columns', 10)
-pd.set_option('display.width', 200)
+pd.set_option('display.width', 250)
 
 
 def main():
@@ -61,18 +58,17 @@ def main():
                                         'Competitive Customers', 'Underserved Customers', 'Hybrid Customers', 'Total Active Customers'])
 
     mappings = pd.read_csv(MAPPINGS_PATH + 'project_mappings_v4.csv', parse_dates=['Mapped Serv Date'])
-    market_types = mappings[['Project_Name', 'Mapped Market Type']]
+    mapping_addition_counter = 0
 
     for file in files:
-        omnia_data_raw = pd.read_csv(RAW_DATA_PATH + file,
-                                     dtype=dtypes,
-                                     parse_dates=parse_dates)
+        omnia_data_raw = pd.read_csv(RAW_DATA_PATH + file, dtype=dtypes, parse_dates=parse_dates)
 
-        omnia_data = omnia_data_raw.drop(['ServiceLocationCreatedBy1', 'FundType1', 'FundTypeID1', 'AccountGroup',
+        omnia_data = omnia_data_raw.drop(['ID', 'ServiceLocationCreatedBy1', 'FundType1', 'FundTypeID1', 'AccountGroup',
                                           'BillingYearYYYY', 'BillingMonthMMM', 'ChargeAmount', 'PromotionAmount',
-                                          'DiscountAmount', 'ServiceAddress1', 'ServiceAddress2'], axis=1)
+                                          'Net', 'DiscountAmount', 'ServiceAddress1', 'ServiceAddress2', 'City',
+                                          'State_Abbreviation', 'Postal_Code'], axis=1)
 
-        to_numeric_cols = ['Omnia_SrvItemLocationID', 'AccountCode1', 'Net', 'Postal_Code']
+        to_numeric_cols = ['Omnia_SrvItemLocationID', 'AccountCode1']
         omnia_data[to_numeric_cols] = omnia_data[to_numeric_cols].apply(pd.to_numeric, errors='coerce')
 
         omnia_data['Wirecenter_Region1'] = omnia_data['Wirecenter_Region1'].astype(str)
@@ -85,9 +81,28 @@ def main():
         omnia_data.Serviceability2.replace(('Yes', 'No'), (1, 0), inplace=True)
         omnia_data['Deactivated'] = omnia_data['Account_Service_Deactivation_Date1'] < datetime.now()
 
-        # should check if any projects aren't in mappings file
+        # check if any projects aren't in mappings file, add to mappings file
+        if len(list(set(omnia_data["Project_Name"]).difference(mappings["Project_Name"]))) > 0:
+            mappings_to_add = omnia_data.loc[omnia_data["Project_Name"].isin(list(set(omnia_data["Project_Name"]).difference(mappings["Project_Name"])))][['Project_Name', 'Wirecenter_Region1', 'Serviceable_Date1', 'MarketType2']].drop_duplicates()
+            mappings_to_add['Mapped Market'] = mappings_to_add['Wirecenter_Region1'].apply(define_market)
+            mappings_to_add.drop('Wirecenter_Region1', axis=1, inplace=True)
+            mappings_to_add = consolidate_market_type(mappings_to_add)
+            mappings_to_add = mappings_to_add.groupby(['Project_Name', 'Mapped Market', 'MarketType2'])[
+                "Serviceable_Date1"].min().sort_values(ascending=False).reset_index(name="Serviceable Date")
+            mappings_to_add = mappings_to_add[~(mappings_to_add["Serviceable Date"].isnull())]
+            mappings_to_add['Mapped Projects'] = mappings_to_add['Project_Name']
+            mappings_to_add['MarketType2'].replace({'Urban': 'Competitive', 'Rural': 'Underserved'}, inplace=True)
+            mappings_to_add.rename(columns={"Project_Name": "Project_Name",
+                                            "Mapped Projects": "Mapped Projects",
+                                            "Mapped Market": "Mapped Market",
+                                            "Serviceable Date": "Mapped Serv Date",
+                                            "MarketType2": "Mapped Market Type"}, inplace=True)
+            mappings_to_add = mappings_to_add.reindex(columns=mappings.columns)
+            mappings = pd.concat([mappings, mappings_to_add], ignore_index=False)
+            mapping_addition_counter += 1
+            print(mappings_to_add["Project_Name"])
 
-        omnia_data = omnia_data.merge(market_types, how='left')
+        omnia_data = omnia_data.merge(mappings[['Project_Name', 'Mapped Market Type']], how='left')
 
         report_df = omnia_data.groupby(['Project_Name', 'Market', 'Mapped Market Type'])["CleanServiceableDate"].min().sort_values(ascending=False).reset_index(name="Serviceable Date")
         CRM_addresses = omnia_data.groupby(['Project_Name', 'Market'])["Full_Address1"].size().reset_index(name="CRM Addresses")
@@ -97,22 +112,19 @@ def main():
         competitive_addresses = competitive_addresses.drop(['Serviceability2', 'Mapped Market Type'], axis=1)
         competitive_addresses.rename(columns={"Project_Name": "Project_Name",
                                               "Market": "Market",
-                                              0: "Competitive Addresses"},
-                                     inplace=True)
+                                              0: "Competitive Addresses"}, inplace=True)
 
         underserved_addresses = addresses_by_type.loc[((addresses_by_type.Serviceability2 == 1) & (addresses_by_type['Mapped Market Type'] == 'Underserved'))]
         underserved_addresses = underserved_addresses.drop(['Serviceability2', 'Mapped Market Type'], axis=1)
         underserved_addresses.rename(columns={"Project_Name": "Project_Name",
                                               "Market": "Market",
-                                              0: "Underserved Addresses"},
-                                     inplace=True)
+                                              0: "Underserved Addresses"}, inplace=True)
 
         hybrid_addresses = addresses_by_type.loc[((addresses_by_type.Serviceability2 == 1) & (addresses_by_type['Mapped Market Type'] == 'Hybrid'))]
         hybrid_addresses = hybrid_addresses.drop(['Serviceability2', 'Mapped Market Type'], axis=1)
         hybrid_addresses.rename(columns={"Project_Name": "Project_Name",
                                          "Market": "Market",
-                                         0: "Hybrid Addresses"},
-                                inplace=True)
+                                         0: "Hybrid Addresses"}, inplace=True)
 
         customers_by_type = omnia_data.groupby(['Project_Name', 'Market', 'Serviceability2', 'Mapped Market Type',
                                                 'Deactivated'])['Account_Service_Activation_Date1'].count().reset_index()
@@ -122,8 +134,7 @@ def main():
         competitive_customers = competitive_customers.drop(['Serviceability2', 'Deactivated', 'Mapped Market Type'], axis=1)
         competitive_customers.rename(columns={"Project_Name": "Project_Name",
                                               "Market": "Market",
-                                              'Account_Service_Activation_Date1': "Competitive Customers"},
-                                     inplace=True)
+                                              'Account_Service_Activation_Date1': "Competitive Customers"}, inplace=True)
 
         underserved_customers = customers_by_type.loc[((customers_by_type.Serviceability2 == 1) &
                                                        (customers_by_type['Mapped Market Type'] == 'Underserved') &
@@ -131,8 +142,7 @@ def main():
         underserved_customers = underserved_customers.drop(['Serviceability2', 'Deactivated', 'Mapped Market Type'], axis=1)
         underserved_customers.rename(columns={"Project_Name": "Project_Name",
                                               "Market": "Market",
-                                              'Account_Service_Activation_Date1': "Underserved Customers"},
-                                     inplace=True)
+                                              'Account_Service_Activation_Date1': "Underserved Customers"}, inplace=True)
 
         hybrid_customers = customers_by_type.loc[((customers_by_type.Serviceability2 == 1) &
                                                        (customers_by_type['Mapped Market Type'] == 'Hybrid') &
@@ -140,8 +150,7 @@ def main():
         hybrid_customers = hybrid_customers.drop(['Serviceability2', 'Deactivated', 'Mapped Market Type'], axis=1)
         hybrid_customers.rename(columns={"Project_Name": "Project_Name",
                                          "Market": "Market",
-                                         'Account_Service_Activation_Date1': "Hybrid Customers"},
-                                inplace=True)
+                                         'Account_Service_Activation_Date1': "Hybrid Customers"}, inplace=True)
 
         report_df = report_df.merge(CRM_addresses)
         report_df = report_df.merge(competitive_addresses, how='left')
@@ -186,6 +195,8 @@ def main():
     # save outputs to excel
     full_report.to_excel(SAVE_PATH + datetime.now().strftime("%Y.%m.%d_%I%M%p") + '_full_report_output.xlsx', index=False)
     cleaned_full_report.to_excel(SAVE_PATH + datetime.now().strftime("%Y.%m.%d_%I%M%p") + '_cleaned_full_report_output.xlsx', index=False)
+    if mapping_addition_counter > 0:
+        mappings.to_csv(MAPPINGS_PATH + datetime.now().strftime("%Y.%m.%d") + '_project_mappings_v4.csv', index=False)
     print('Complete - {0:0.1f} seconds'.format(time.time() - startTime))
 
     # have dataframe with all days between first date and today
@@ -289,8 +300,24 @@ def clean_data(df):
         return df
 
 
+def consolidate_market_type(df):
+    # Calculate the count of each Project_Name and MarketType2 pair
+    counts = df.groupby(["Project_Name", "MarketType2"]).size().reset_index(name="Count")
 
+    # Find the pairs with the maximum count for each project
+    max_counts = counts.groupby("Project_Name")["Count"].idxmax()
+    max_pairs = counts.loc[max_counts, ["Project_Name", "MarketType2"]]
 
+    # Merge the maximum pairs back to the original DataFrame
+    merged_df = df.merge(max_pairs, on="Project_Name", how="left")
+
+    # Replace the MarketType2 column with the consolidated label
+    merged_df["MarketType2"] = merged_df["MarketType2_y"].fillna(merged_df["MarketType2_x"])
+
+    # Drop unnecessary columns
+    merged_df = merged_df.drop(["MarketType2_x", "MarketType2_y"], axis=1)
+
+    return merged_df.drop_duplicates()
 
 
 if __name__ == '__main__':
