@@ -4,9 +4,10 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 import time
+import glob
 
 RAW_DATA_PATH = "C:/Users/alexander.bennett/PycharmProjects/Point Penetration Report/~raw_data/~from_Box_ASB_rename/"
-MAPPINGS_PATH = "C:/Users/alexander.bennett/PycharmProjects/Point Penetration Report/~raw_data/"
+MAPPINGS_PATH = "C:/Users/alexander.bennett/PycharmProjects/Point Penetration Report/~raw_data/~mappings"
 SAVE_PATH = "C:/Users/alexander.bennett/PycharmProjects/Point Penetration Report/~outputs/"
 
 pd.set_option('display.max_columns', 10)
@@ -57,7 +58,7 @@ def main():
                                         'Competitive Addresses', 'Underserved Addresses', 'Hybrid Addresses', 'Total Serviceable Addresses',
                                         'Competitive Customers', 'Underserved Customers', 'Hybrid Customers', 'Total Active Customers'])
 
-    mappings = pd.read_csv(MAPPINGS_PATH + 'project_mappings_v4.csv', parse_dates=['Mapped Serv Date'])
+    mappings = pd.read_csv(max(glob.glob(MAPPINGS_PATH + '/*'), key=os.path.getctime), parse_dates=['Mapped Serv Date'])
     mapping_addition_counter = 0
 
     for file in files:
@@ -74,11 +75,11 @@ def main():
         omnia_data['Wirecenter_Region1'] = omnia_data['Wirecenter_Region1'].astype(str)
         omnia_data['Market'] = omnia_data['Wirecenter_Region1'].apply(define_market)
         omnia_data['CleanCreatedOn'] = omnia_data[['CreatedOn1', 'Account_Service_Activation_Date1']].min(axis=1)
+        omnia_data.Serviceability2.replace(('Yes', 'No'), (1, 0), inplace=True)
         omnia_data['CleanServiceableDate'] = omnia_data.apply(lambda x: get_clean_serviceable_date(x.Serviceability2,
                                                                                                    x.Serviceable_Date1,
                                                                                                    x.Account_Service_Activation_Date1,
                                                                                                    x.CleanCreatedOn), axis=1)
-        omnia_data.Serviceability2.replace(('Yes', 'No'), (1, 0), inplace=True)
         omnia_data['Deactivated'] = omnia_data['Account_Service_Deactivation_Date1'] < datetime.now()
 
         # check if any projects aren't in mappings file, add to mappings file
@@ -169,6 +170,7 @@ def main():
         full_report = pd.concat([full_report, report_df], ignore_index=False)
         # od_to_output = pd.concat([od_to_output, omnia_data.loc[:, ['Project_Name', 'Market', 'MarketType2']]], ignore_index=False)
 
+    revert_point = full_report.copy()
     full_report = full_report.sort_values(by=['Project_Name', 'Source File'])
     full_report = full_report.merge(mappings, how='left')
     full_report = full_report.groupby(['Mapped Projects', 'Mapped Market', 'Mapped Market Type', 'Mapped Serv Date', 'Source File']).sum().reset_index()
@@ -196,7 +198,7 @@ def main():
     full_report.to_excel(SAVE_PATH + datetime.now().strftime("%Y.%m.%d_%I%M%p") + '_full_report_output.xlsx', index=False)
     cleaned_full_report.to_excel(SAVE_PATH + datetime.now().strftime("%Y.%m.%d_%I%M%p") + '_cleaned_full_report_output.xlsx', index=False)
     if mapping_addition_counter > 0:
-        mappings.to_csv(MAPPINGS_PATH + datetime.now().strftime("%Y.%m.%d") + '_project_mappings_v4.csv', index=False)
+        mappings.to_csv(MAPPINGS_PATH + datetime.now().strftime("%Y.%m.%d") + '_project_mappings.csv', index=False)
     print('Complete - {0:0.1f} seconds'.format(time.time() - startTime))
 
     # have dataframe with all days between first date and today
