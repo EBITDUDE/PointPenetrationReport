@@ -62,20 +62,30 @@ def main():
     mapping_addition_counter = 0
 
     for file in files:
+        # read in raw data
         omnia_data_raw = pd.read_csv(RAW_DATA_PATH + file, dtype=dtypes, parse_dates=parse_dates)
 
+        # kill columns we don't use
         omnia_data = omnia_data_raw.drop(['ID', 'ServiceLocationCreatedBy1', 'FundType1', 'FundTypeID1', 'AccountGroup',
                                           'BillingYearYYYY', 'BillingMonthMMM', 'ChargeAmount', 'PromotionAmount',
                                           'Net', 'DiscountAmount', 'ServiceAddress1', 'ServiceAddress2', 'City',
                                           'State_Abbreviation', 'Postal_Code'], axis=1)
 
+        # convert columns that should be numeric from string
         to_numeric_cols = ['Omnia_SrvItemLocationID', 'AccountCode1']
         omnia_data[to_numeric_cols] = omnia_data[to_numeric_cols].apply(pd.to_numeric, errors='coerce')
 
+        # derive market identifier from wirecenter
         omnia_data['Wirecenter_Region1'] = omnia_data['Wirecenter_Region1'].astype(str)
         omnia_data['Market'] = omnia_data['Wirecenter_Region1'].apply(define_market)
+
+        # derive created on date from lesser of existing created on date and activation date
         omnia_data['CleanCreatedOn'] = omnia_data[['CreatedOn1', 'Account_Service_Activation_Date1']].min(axis=1)
+
+        # Convert serviceability tag from Yes / No to numeric binary
         omnia_data.Serviceability2.replace(('Yes', 'No'), (1, 0), inplace=True)
+
+        # Create a clean serviceable date by controlling for anomalous date entries
         omnia_data['CleanServiceableDate'] = omnia_data.apply(lambda x: get_clean_serviceable_date(x.Serviceability2,
                                                                                                    x.Serviceable_Date1,
                                                                                                    x.Account_Service_Activation_Date1,
@@ -99,9 +109,12 @@ def main():
                                             "Serviceable Date": "Mapped Serv Date",
                                             "MarketType2": "Mapped Market Type"}, inplace=True)
             mappings_to_add = mappings_to_add.reindex(columns=mappings.columns)
-            mappings = pd.concat([mappings, mappings_to_add], ignore_index=False)
-            mapping_addition_counter += 1
-            print(mappings_to_add["Project_Name"])
+            if mappings_to_add.empty:
+                pass
+            else:
+                mappings = pd.concat([mappings, mappings_to_add], ignore_index=False)
+                mapping_addition_counter += 1
+                print(mappings_to_add["Project_Name"])
 
         omnia_data = omnia_data.merge(mappings[['Project_Name', 'Mapped Market Type']], how='left')
 
@@ -193,12 +206,17 @@ def main():
     cleaned_full_report['Underserved Penetration'] = cleaned_full_report['Underserved Customers'] / cleaned_full_report['Underserved Addresses']
     cleaned_full_report['Hybrid Penetration'] = cleaned_full_report['Hybrid Customers'] / cleaned_full_report['Hybrid Addresses']
     cleaned_full_report['Total Penetration'] = cleaned_full_report['Total Active Customers'] / cleaned_full_report['Total Serviceable Addresses']
+    full_report = full_report.fillna(0)
+    cleaned_full_report = cleaned_full_report.fillna(0)
 
     # save outputs to excel
     full_report.to_excel(SAVE_PATH + datetime.now().strftime("%Y.%m.%d_%I%M%p") + '_full_report_output.xlsx', index=False)
     cleaned_full_report.to_excel(SAVE_PATH + datetime.now().strftime("%Y.%m.%d_%I%M%p") + '_cleaned_full_report_output.xlsx', index=False)
     if mapping_addition_counter > 0:
-        mappings.to_csv(MAPPINGS_PATH + datetime.now().strftime("%Y.%m.%d") + '_project_mappings.csv', index=False)
+        mappings.to_csv(MAPPINGS_PATH + '/' + datetime.now().strftime("%Y.%m.%d") + '_project_mappings.csv', index=False)
+    if len(full_report) > len(cleaned_full_report):
+        dropped_projects = full_report[~full_report.isin(cleaned_full_report)].dropna()
+        dropped_projects.to_excel(SAVE_PATH + datetime.now().strftime("%Y.%m.%d_%I%M%p") + '_dropped_projects.xlsx', index=False)
     print('Complete - {0:0.1f} seconds'.format(time.time() - startTime))
 
     # have dataframe with all days between first date and today
@@ -265,12 +283,14 @@ def run_rename():
 def clean_data(df):
     df = df.copy()
     if (df["Mapped Serv Date"] == "1/0/00").all(axis=0):
+        print("0 Serv Date: " + df["Mapped Projects"].iloc[0])
         return
     else:
         df["Mapped Serv Date"] = pd.to_datetime(df["Mapped Serv Date"]).apply(datetime.date)
         df = df[~(df["Source File"] < df["Mapped Serv Date"])]
 
     if all(i <= 24 for i in df["Total Serviceable Addresses"]):
+        print("All <=24: " + df["Mapped Projects"].iloc[0])
         return
 
     for idx, value in enumerate(df["Total Serviceable Addresses"]):
@@ -282,6 +302,7 @@ def clean_data(df):
     # should return names of projects getting cut - maybe call new function and append project name to list if getting killed in any of these
 
     if df.iloc[-1]["Total Serviceable Addresses"] <= 10:
+        print("Last <=10:" + df["Mapped Projects"].iloc[0])
         pass
     elif df.iloc[-1]["Mapped Market"] == "NY":
         df["Mapped Serv Date"] = pd.to_datetime(df["Mapped Serv Date"])
