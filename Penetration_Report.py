@@ -3,9 +3,11 @@ import math
 import pandas as pd
 import numpy as np
 from datetime import datetime
+from datetime import date
 import time
 import glob
 from pathlib import Path
+import dateutil.relativedelta as relativedelta
 
 RAW_DATA_PATH = "C:/Users/alexander.bennett/PycharmProjects/Point Penetration Report/~raw_data/~from_Box_ASB_rename/"
 MAPPINGS_PATH = "C:/Users/alexander.bennett/PycharmProjects/Point Penetration Report/~raw_data/~mappings"
@@ -61,6 +63,10 @@ def main():
 
     mappings = pd.read_csv(max(glob.glob(MAPPINGS_PATH + '/*'), key=os.path.getctime), parse_dates=['Mapped Serv Date'])
     mapping_addition_counter = 0
+    prev_addresses_by_type = None
+    filtered_jump = None
+    filtered_drop = None
+    serviceable_address_database = pd.DataFrame(columns=['Project_Name', 'Omnia_SrvItemLocationID'])
 
     for file in files:
         # read in raw data
@@ -80,11 +86,34 @@ def main():
         omnia_data['Wirecenter_Region1'] = omnia_data['Wirecenter_Region1'].astype(str)
         omnia_data['Market'] = omnia_data['Wirecenter_Region1'].apply(define_market)
 
-        # Convert serviceability tag from Yes / No to numeric binary
+        # convert serviceability tag from Yes / No to numeric binary
         omnia_data.Serviceability2.replace(('Yes', 'No'), (1, 0), inplace=True)
 
-        # Determine whether customer has already deactivated per deactivation date tag vs today
-        omnia_data['Deactivated'] = omnia_data['Account_Service_Deactivation_Date1'] < datetime.now()
+        # determine whether customer has already deactivated per deactivation date tag vs date of source file
+        omnia_data['Deactivated'] = omnia_data['Account_Service_Deactivation_Date1'] < pd.Timestamp(datetime.strptime(file[:10], '%Y-%m-%d').date())
+
+        omnia_data = omnia_data[omnia_data['Serviceability2'] != 0]
+
+        # code below creates master serviceable address database
+        # location_data = omnia_data.drop(['MarketType2', 'Cabinet', 'Wirecenter_Region1', 'Serviceable_Date1', 'CreatedOn1',
+        #                                 'Full_Address1', 'AccountLocationStatus1', 'AccountType',
+        #                                 'AccountCode1', 'AccountName1', 'Market', 'Account_Service_Deactivation_Date1',
+        #                                 'Deactivated', 'Account_Service_Activation_Date1'], axis=1)
+
+        omnia_data = omnia_data[omnia_data['Deactivated'] == False]
+
+        # merge the latest source file to the master database
+        # merged_locations = pd.merge(serviceable_address_database, location_data[['Project_Name', 'Omnia_SrvItemLocationID', 'Serviceability2']], on=['Project_Name', 'Omnia_SrvItemLocationID'], how='outer')
+
+        # set the new column name to match the source file name
+        # new_columns = merged_locations.columns.values
+        # new_columns[-1] = datetime.strptime(file[:10], '%Y-%m-%d').date()
+        # merged_locations.columns = new_columns
+
+        # set the merged_df as the new summary_df for the next iteration; delete duplicate entries to reduce bloat
+        # serviceable_address_database = merged_locations.copy()
+        # print(file + ": " + str(serviceable_address_database.duplicated().sum()) + " duplicate rows")
+        # serviceable_address_database = serviceable_address_database.drop_duplicates()
 
         # check if any projects aren't in mappings file, add to mappings file
         if len(list(set(omnia_data["Project_Name"]).difference(mappings["Project_Name"]))) > 0:
@@ -111,15 +140,34 @@ def main():
 
         omnia_data = omnia_data.merge(mappings[['Project_Name', 'Mapped Projects', 'Mapped Market', 'Mapped Market Type', 'Mapped Serv Date']], how='left')
 
-        report_df = omnia_data.groupby(['Mapped Projects', 'Mapped Market', 'Mapped Market Type', 'Mapped Serv Date'])["Full_Address1"].size().reset_index(name="CRM Addresses")
+        report_df = omnia_data.groupby(['Mapped Projects', 'Mapped Market', 'Mapped Market Type', 'Mapped Serv Date'])["Omnia_SrvItemLocationID"].size().reset_index(name="CRM Addresses")
+        report_df["CRM Addresses"] = report_df["CRM Addresses"].astype(float)
+
+        addresses_by_type = omnia_data.groupby(['Mapped Projects', 'Mapped Market', 'Serviceability2', 'Mapped Market Type']).size().reset_index()
+        customers_by_type = omnia_data.groupby(['Mapped Projects', 'Mapped Market', 'Serviceability2', 'Mapped Market Type', 'Deactivated'])['Account_Service_Activation_Date1'].count().reset_index()
+
+        if file == files[0]:
+            prev_addresses_by_type = addresses_by_type.copy()
+        else:
+            merged_df = pd.merge(prev_addresses_by_type, addresses_by_type, on=['Mapped Projects', 'Mapped Market', 'Mapped Market Type', 'Serviceability2'])
+            merged_df = merged_df[merged_df['Serviceability2'] != 0]
+            merged_df['Addresses Diff'] = merged_df['0_y'] / merged_df['0_x'] - 1
+            merged_df.loc[:, "Source"] = datetime.strptime(file[:10], '%Y-%m-%d').date()
+            merged_df = merged_df.merge(mappings[['Mapped Projects', 'Mapped Market', 'Mapped Market Type', 'Mapped Serv Date']], how='left').drop_duplicates()
+            merged_df = merged_df[~(merged_df["Source"] < merged_df["Mapped Serv Date"])]
+            merged_df = merged_df[(merged_df['0_x'] > 25) & (merged_df['0_y'] > 25)]
+
+            big_jump = merged_df[merged_df['Addresses Diff'] > 0.15]
+            big_drop = merged_df[merged_df['Addresses Diff'] < -0.15]
+            filtered_jump = pd.concat([filtered_jump, big_jump], ignore_index=False)
+            filtered_drop = pd.concat([filtered_drop, big_drop], ignore_index=False)
+            prev_addresses_by_type = addresses_by_type.copy()
 
         # if CRM addresses changes by more than a threshold, duplicate the row and rename the project to "-A" or something
         # need to figure out where to add this logic and if the remaining joins will still work
         # feel like they should because it'll be a valid entry across all identifiers
 
-        addresses_by_type = omnia_data.groupby(['Mapped Projects', 'Mapped Market', 'Serviceability2', 'Mapped Market Type']).size().reset_index()
-        customers_by_type = omnia_data.groupby(['Mapped Projects', 'Mapped Market', 'Serviceability2', 'Mapped Market Type', 'Deactivated'])['Account_Service_Activation_Date1'].count().reset_index()
-
+        # create datasets of competitive, underserved, and hybrid addresses by the tags from the mappings file
         competitive_addresses = addresses_by_type.loc[((addresses_by_type.Serviceability2 == 1) & (addresses_by_type['Mapped Market Type'] == 'Competitive'))]
         competitive_addresses = competitive_addresses.drop(['Serviceability2', 'Mapped Market Type'], axis=1)
         competitive_addresses.rename(columns={"Mapped Projects": "Mapped Projects",
@@ -138,6 +186,7 @@ def main():
                                          "Mapped Market": "Mapped Market",
                                          0: "Hybrid Addresses"}, inplace=True)
 
+        # create datasets of competitive, underserved, and hybrid customer counts by the tags from the mappings file
         competitive_customers = customers_by_type.loc[((customers_by_type.Serviceability2 == 1) &
                                                        (customers_by_type['Mapped Market Type'] == 'Competitive') &
                                                        (customers_by_type.Deactivated == False))]
@@ -162,6 +211,7 @@ def main():
                                          "Mapped Market": "Mapped Market",
                                          "Account_Service_Activation_Date1": "Hybrid Customers"}, inplace=True)
 
+        # merge datasets created above onto master report
         report_df = report_df.merge(competitive_addresses, how='left')
         report_df = report_df.merge(underserved_addresses, how='left')
         report_df = report_df.merge(hybrid_addresses, how='left')
@@ -199,11 +249,52 @@ def main():
     cleaned_full_report['Total Penetration'] = cleaned_full_report['Total Active Customers'] / cleaned_full_report['Total Serviceable Addresses']
     full_report = full_report.fillna(0)
     cleaned_full_report = cleaned_full_report.fillna(0)
+    full_report['Mapped Serv Date'] = full_report['Mapped Serv Date'].apply(lambda x: x.date())
+    cleaned_full_report['Mapped Serv Date'] = cleaned_full_report['Mapped Serv Date'].apply(lambda x: x.date())
 
-    # save outputs to excel
+    dates = cleaned_full_report["Source File"].sort_values().drop_duplicates()
+    age_range = range(1, 37)
+
+    shortened_full_report = pd.DataFrame({
+        'Mapped Projects': mappings['Mapped Projects'].repeat(len(age_range)),
+        'Mapped Market': mappings['Mapped Market'].repeat(len(age_range)),
+        'Mapped Serv Date': mappings['Mapped Serv Date'].repeat(len(age_range)).apply(lambda x: x.date()),
+        'Mapped Market Type': mappings['Mapped Market Type'].repeat(len(age_range)),
+        'Age': list(age_range) * len(mappings)
+    })
+
+    shortened_full_report = shortened_full_report.drop_duplicates()
+    shortened_full_report['Source File'] = shortened_full_report.apply(lambda row: find_closest_date(dates, row['Mapped Serv Date'], row['Age']), axis=1)
+    shortened_full_report = shortened_full_report.dropna()
+    cols = shortened_full_report.columns.tolist()
+    cols = cols[:2] + [cols[3]] + [cols[2]] + cols[-2:]
+    shortened_full_report = shortened_full_report[cols]
+    shortened_full_report = shortened_full_report.merge(cleaned_full_report)
+    shortened_full_report = shortened_full_report.sort_values(by=['Mapped Projects', 'Source File'])
+
+    names = shortened_full_report["Mapped Projects"].unique()
+
+    final_report = pd.DataFrame(columns=shortened_full_report.columns)
+    for name in names:
+        named_subset = shortened_full_report[shortened_full_report["Mapped Projects"] == name].sort_values(by="Source File")
+        named_subset['Competitive Addresses'] = replace_with_last_value(named_subset['Competitive Addresses'])
+        named_subset['Underserved Addresses'] = replace_with_last_value(named_subset['Underserved Addresses'])
+        named_subset['Hybrid Addresses'] = replace_with_last_value(named_subset['Hybrid Addresses'])
+        named_subset['Total Serviceable Addresses'] = replace_with_last_value(named_subset['Total Serviceable Addresses'])
+        final_report = pd.concat([final_report, named_subset], ignore_index=False)
+        # shouldn't clean if name matches one of the two i found
+
+    # create save folder and save outputs to excel
     create_directory()
-    full_report.to_excel(SAVE_PATH + datetime.now().strftime("%Y.%m.%d_%I%M%p") + '_full_report_output.xlsx', index=False)
-    cleaned_full_report.to_excel(SAVE_PATH + datetime.now().strftime("%Y.%m.%d_%I%M%p") + '_cleaned_full_report_output.xlsx', index=False)
+
+    # add project mappings, move project mappings column to front, save down
+    # serviceable_address_database = serviceable_address_database.merge(mappings[['Project_Name', 'Mapped Projects']], how='left')
+    # serviceable_address_database.insert(0, 'Mapped Projects', serviceable_address_database.pop('Mapped Projects'))
+    # serviceable_address_database.to_excel(SAVE_PATH + datetime.now().strftime("%Y.%m.%d_%I%M%p") + '_passings_over_time_output.xlsx', index=False)
+
+    full_report.to_excel(SAVE_PATH + datetime.now().strftime("%Y.%m.%d_%I%M%p") + '_full_output.xlsx', index=False)
+    cleaned_full_report.to_excel(SAVE_PATH + datetime.now().strftime("%Y.%m.%d_%I%M%p") + '_cleaned_output.xlsx', index=False)
+    final_report.to_excel(SAVE_PATH + datetime.now().strftime("%Y.%m.%d_%I%M%p") + '_shortened_cleaned_output.xlsx', index=False)
     if mapping_addition_counter > 0:
         mappings.to_csv(MAPPINGS_PATH + '/' + datetime.now().strftime("%Y.%m.%d") + '_project_mappings.csv', index=False)
     if len(full_report) > len(cleaned_full_report):
@@ -239,25 +330,6 @@ def define_market(wcregion):
         return 'NGN'
     else:
         return 'Unknown'
-
-
-def get_clean_serviceable_date(serviceability, serv_date, active_date, clean_created_date):
-    if serviceability == 0 and pd.isnull(active_date):
-        return pd.NaT
-        # return np.datetime64('NaT')
-    elif serviceability == 0 and not pd.isnull(active_date):
-        return clean_created_date
-    elif pd.isnull(serv_date):
-        return clean_created_date
-    elif active_date < serv_date:
-        return clean_created_date
-    else:
-        return serv_date
-
-
-def diff_month(d2):
-    d1 = datetime.now()
-    return min(36, (d1.year - d2.year) * 12 + d1.month - d2.month)
 
 
 def run_rename():
@@ -334,6 +406,33 @@ def create_directory():
         print("Created new output folder at " + SAVE_PATH)
     else:
         print("No folder created. Folder already exists at " + SAVE_PATH)
+
+
+def find_closest_date(date_list, base_date, offset_months):
+    if pd.isnull(base_date):
+        return None
+
+    prior_target_date = max(base_date, base_date + relativedelta.relativedelta(months=offset_months - 1))
+    target_date = base_date + relativedelta.relativedelta(months=offset_months)
+
+    if target_date <= date.today():
+        valid_dates = [i for i in date_list if target_date >= i > base_date and i > prior_target_date]
+        if valid_dates:
+            closest_date = max(valid_dates)
+            return closest_date
+    else:
+        return None
+
+
+def replace_with_last_value(df):
+    df = df.copy()
+    last_value = df.iloc[-1]
+    first_value = df.iloc[0]
+
+    if last_value < first_value:
+        df = df.apply(lambda x: last_value)
+
+    return df
 
 
 if __name__ == '__main__':
