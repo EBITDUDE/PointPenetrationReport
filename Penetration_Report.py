@@ -54,8 +54,7 @@ def main():
               'City': 'str',
               'State_Abbreviation': 'str',
               'Postal_Code': 'str'}
-    parse_dates = ['CreatedOn1', 'Serviceable_Date1', 'ServiceLocationCreatedBy1', 'Account_Service_Activation_Date1',
-                   'Account_Service_Deactivation_Date1']
+    parse_dates = ['CreatedOn1', 'Serviceable_Date1', 'Account_Service_Activation_Date1', 'Account_Service_Deactivation_Date1']
 
     full_report = pd.DataFrame(columns=['Project_Name', 'Market', 'Serviceable Date', 'CRM Addresses',
                                         'Competitive Addresses', 'Underserved Addresses', 'Hybrid Addresses', 'Total Serviceable Addresses',
@@ -63,20 +62,17 @@ def main():
 
     mappings = pd.read_csv(max(glob.glob(MAPPINGS_PATH + '/*'), key=os.path.getctime), parse_dates=['Mapped Serv Date'])
     mapping_addition_counter = 0
-    prev_addresses_by_type = None
-    filtered_jump = None
-    filtered_drop = None
-    serviceable_address_database = pd.DataFrame(columns=['Project_Name', 'Omnia_SrvItemLocationID'])
 
     for file in files:
         # read in raw data
         omnia_data_raw = pd.read_csv(RAW_DATA_PATH + file, dtype=dtypes, parse_dates=parse_dates)
 
         # kill columns we don't use
-        omnia_data = omnia_data_raw.drop(['ID', 'ServiceLocationCreatedBy1', 'FundType1', 'FundTypeID1', 'AccountGroup',
+        omnia_data = omnia_data_raw.drop(['ID', 'Full_Address1', 'ServiceLocationCreatedBy1', 'FundType1',
+                                          'FundTypeID1', 'AccountLocationStatus1', 'AccountGroup',
                                           'BillingYearYYYY', 'BillingMonthMMM', 'ChargeAmount', 'PromotionAmount',
                                           'Net', 'DiscountAmount', 'ServiceAddress1', 'ServiceAddress2', 'City',
-                                          'State_Abbreviation', 'Postal_Code'], axis=1)
+                                          'State_Abbreviation', 'Postal_Code'], axis=1, errors='ignore')
 
         # convert columns that should be numeric from string
         to_numeric_cols = ['Omnia_SrvItemLocationID', 'AccountCode1']
@@ -94,26 +90,7 @@ def main():
 
         omnia_data = omnia_data[omnia_data['Serviceability2'] != 0]
 
-        # code below creates master serviceable address database
-        # location_data = omnia_data.drop(['MarketType2', 'Cabinet', 'Wirecenter_Region1', 'Serviceable_Date1', 'CreatedOn1',
-        #                                 'Full_Address1', 'AccountLocationStatus1', 'AccountType',
-        #                                 'AccountCode1', 'AccountName1', 'Market', 'Account_Service_Deactivation_Date1',
-        #                                 'Deactivated', 'Account_Service_Activation_Date1'], axis=1)
-
         omnia_data = omnia_data[omnia_data['Deactivated'] == False]
-
-        # merge the latest source file to the master database
-        # merged_locations = pd.merge(serviceable_address_database, location_data[['Project_Name', 'Omnia_SrvItemLocationID', 'Serviceability2']], on=['Project_Name', 'Omnia_SrvItemLocationID'], how='outer')
-
-        # set the new column name to match the source file name
-        # new_columns = merged_locations.columns.values
-        # new_columns[-1] = datetime.strptime(file[:10], '%Y-%m-%d').date()
-        # merged_locations.columns = new_columns
-
-        # set the merged_df as the new summary_df for the next iteration; delete duplicate entries to reduce bloat
-        # serviceable_address_database = merged_locations.copy()
-        # print(file + ": " + str(serviceable_address_database.duplicated().sum()) + " duplicate rows")
-        # serviceable_address_database = serviceable_address_database.drop_duplicates()
 
         # check if any projects aren't in mappings file, add to mappings file
         if len(list(set(omnia_data["Project_Name"]).difference(mappings["Project_Name"]))) > 0:
@@ -145,27 +122,6 @@ def main():
 
         addresses_by_type = omnia_data.groupby(['Mapped Projects', 'Mapped Market', 'Serviceability2', 'Mapped Market Type']).size().reset_index()
         customers_by_type = omnia_data.groupby(['Mapped Projects', 'Mapped Market', 'Serviceability2', 'Mapped Market Type', 'Deactivated'])['Account_Service_Activation_Date1'].count().reset_index()
-
-        if file == files[0]:
-            prev_addresses_by_type = addresses_by_type.copy()
-        else:
-            merged_df = pd.merge(prev_addresses_by_type, addresses_by_type, on=['Mapped Projects', 'Mapped Market', 'Mapped Market Type', 'Serviceability2'])
-            merged_df = merged_df[merged_df['Serviceability2'] != 0]
-            merged_df['Addresses Diff'] = merged_df['0_y'] / merged_df['0_x'] - 1
-            merged_df.loc[:, "Source"] = datetime.strptime(file[:10], '%Y-%m-%d').date()
-            merged_df = merged_df.merge(mappings[['Mapped Projects', 'Mapped Market', 'Mapped Market Type', 'Mapped Serv Date']], how='left').drop_duplicates()
-            merged_df = merged_df[~(merged_df["Source"] < merged_df["Mapped Serv Date"])]
-            merged_df = merged_df[(merged_df['0_x'] > 25) & (merged_df['0_y'] > 25)]
-
-            big_jump = merged_df[merged_df['Addresses Diff'] > 0.15]
-            big_drop = merged_df[merged_df['Addresses Diff'] < -0.15]
-            filtered_jump = pd.concat([filtered_jump, big_jump], ignore_index=False)
-            filtered_drop = pd.concat([filtered_drop, big_drop], ignore_index=False)
-            prev_addresses_by_type = addresses_by_type.copy()
-
-        # if CRM addresses changes by more than a threshold, duplicate the row and rename the project to "-A" or something
-        # need to figure out where to add this logic and if the remaining joins will still work
-        # feel like they should because it'll be a valid entry across all identifiers
 
         # create datasets of competitive, underserved, and hybrid addresses by the tags from the mappings file
         competitive_addresses = addresses_by_type.loc[((addresses_by_type.Serviceability2 == 1) & (addresses_by_type['Mapped Market Type'] == 'Competitive'))]
@@ -230,23 +186,21 @@ def main():
     full_report = full_report.groupby(['Mapped Projects', 'Mapped Market', 'Mapped Market Type', 'Mapped Serv Date', 'Source File']).sum().reset_index()
 
     cleaned_full_report = pd.DataFrame(columns=full_report.columns)
-
     names = full_report["Mapped Projects"].unique()
-
     for name in names:
         named_subset = full_report[full_report["Mapped Projects"] == name].sort_values(by="Source File")
         cleaned_subset = clean_data(named_subset)
         cleaned_full_report = pd.concat([cleaned_full_report, cleaned_subset], ignore_index=False)
 
     # add penetration calculations
-    full_report['Competitive Penetration'] = full_report['Competitive Customers'] / full_report['Competitive Addresses']
-    full_report['Underserved Penetration'] = full_report['Underserved Customers'] / full_report['Underserved Addresses']
-    full_report['Hybrid Penetration'] = full_report['Hybrid Customers'] / full_report['Hybrid Addresses']
-    full_report['Total Penetration'] = full_report['Total Active Customers'] / full_report['Total Serviceable Addresses']
-    cleaned_full_report['Competitive Penetration'] = cleaned_full_report['Competitive Customers'] / cleaned_full_report['Competitive Addresses']
-    cleaned_full_report['Underserved Penetration'] = cleaned_full_report['Underserved Customers'] / cleaned_full_report['Underserved Addresses']
-    cleaned_full_report['Hybrid Penetration'] = cleaned_full_report['Hybrid Customers'] / cleaned_full_report['Hybrid Addresses']
-    cleaned_full_report['Total Penetration'] = cleaned_full_report['Total Active Customers'] / cleaned_full_report['Total Serviceable Addresses']
+    penetration_cols = ['Competitive Penetration', 'Underserved Penetration', 'Hybrid Penetration', 'Total Penetration']
+    customer_cols = ['Competitive Customers', 'Underserved Customers', 'Hybrid Customers', 'Total Active Customers']
+    address_cols = ['Competitive Addresses', 'Underserved Addresses', 'Hybrid Addresses', 'Total Serviceable Addresses']
+
+    for i in range(len(penetration_cols)):
+        full_report[penetration_cols[i]] = full_report[customer_cols[i]] / full_report[address_cols[i]]
+        cleaned_full_report[penetration_cols[i]] = cleaned_full_report[customer_cols[i]] / cleaned_full_report[address_cols[i]]
+
     full_report = full_report.fillna(0)
     cleaned_full_report = cleaned_full_report.fillna(0)
     full_report['Mapped Serv Date'] = full_report['Mapped Serv Date'].apply(lambda x: x.date())
@@ -272,9 +226,9 @@ def main():
     shortened_full_report = shortened_full_report.merge(cleaned_full_report)
     shortened_full_report = shortened_full_report.sort_values(by=['Mapped Projects', 'Source File'])
 
-    names = shortened_full_report["Mapped Projects"].unique()
-
+    # if last value is less than first value, replace all with lower last value - helps control for address audits
     final_report = pd.DataFrame(columns=shortened_full_report.columns)
+    names = shortened_full_report["Mapped Projects"].unique()
     for name in names:
         named_subset = shortened_full_report[shortened_full_report["Mapped Projects"] == name].sort_values(by="Source File")
         named_subset['Competitive Addresses'] = replace_with_last_value(named_subset['Competitive Addresses'])
@@ -284,13 +238,13 @@ def main():
         final_report = pd.concat([final_report, named_subset], ignore_index=False)
         # shouldn't clean if name matches one of the two i found
 
+    # add penetration calculations
+    for i in range(len(penetration_cols)):
+        final_report[penetration_cols[i]] = final_report[customer_cols[i]] / final_report[address_cols[i]]
+    final_report = final_report.fillna(0)
+
     # create save folder and save outputs to excel
     create_directory()
-
-    # add project mappings, move project mappings column to front, save down
-    # serviceable_address_database = serviceable_address_database.merge(mappings[['Project_Name', 'Mapped Projects']], how='left')
-    # serviceable_address_database.insert(0, 'Mapped Projects', serviceable_address_database.pop('Mapped Projects'))
-    # serviceable_address_database.to_excel(SAVE_PATH + datetime.now().strftime("%Y.%m.%d_%I%M%p") + '_passings_over_time_output.xlsx', index=False)
 
     full_report.to_excel(SAVE_PATH + datetime.now().strftime("%Y.%m.%d_%I%M%p") + '_full_output.xlsx', index=False)
     cleaned_full_report.to_excel(SAVE_PATH + datetime.now().strftime("%Y.%m.%d_%I%M%p") + '_cleaned_output.xlsx', index=False)
