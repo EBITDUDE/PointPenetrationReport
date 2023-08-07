@@ -8,6 +8,9 @@ import time
 import glob
 from pathlib import Path
 import dateutil.relativedelta as relativedelta
+import seaborn as sns
+import matplotlib.pyplot as plt
+from matplotlib.ticker import PercentFormatter
 
 RAW_DATA_PATH = "C:/Users/alexander.bennett/PycharmProjects/Point Penetration Report/~raw_data/~from_Box_ASB_rename/"
 MAPPINGS_PATH = "C:/Users/alexander.bennett/PycharmProjects/Point Penetration Report/~raw_data/~mappings"
@@ -256,11 +259,74 @@ def main():
         dropped_projects.to_excel(SAVE_PATH + datetime.now().strftime("%Y.%m.%d_%I%M%p") + '_dropped_projects.xlsx', index=False)
     print('Complete - {0:0.1f} seconds'.format(time.time() - startTime))
 
+    # test whether outputs are identical
+    # file_path1 = SAVE_PATH + '2023.08.05_0535PM_full_output.xlsx'
+    # file_path2 = "C:/Users/alexander.bennett/PycharmProjects/Point Penetration Report/~outputs/" + '2023.08.02_1201PM/' + '2023.08.02_1202PM_full_output.xlsx'
+    # are_excel_files_identical(file_path1, file_path2)
+
+    # add quarter identifier to final report dataframe
+    final_report["Quarter Cohort"] = final_report["Mapped Serv Date"].apply(lambda x: f"Q{pd.Timestamp(x).quarter}'{str(pd.Timestamp(x).year)[-2:]}")
+    full_dataset_start_date = date(2021, 6, 30)
+    final_report = final_report[final_report["Mapped Serv Date"] > full_dataset_start_date]
+    # final_report = final_report[final_report["Mapped Market"] == "VATN"]
+
+    hex_color_codes = ['#4472C4', '#ED7D31', '#A5A5A5', '#FFC000', '#5B9BD5', '#70AD47', '#264478',
+                       '#9E480E', '#636363', '#997300', '#255E91', '#43682B', '#243F60', '#7F3300',
+                       '#4F81BD', '#4BACC6', '#F79646', '#C00000', '#7E6B8F', '#9BBB59', '#4AACC5',
+                       '#FFC000', '#F64100', '#3060B0', '#CC3300']
+    non_cohort_colors = ['#7209B7', 'black', 'tab:blue']
+    non_cohort_labels = 3
+
+    cohort_level_data = final_report.groupby(["Quarter Cohort", "Mapped Market Type", "Age"])[["Total Active Customers", "Total Serviceable Addresses"]].sum().reset_index()
+    cohort_level_data["Delta"] = cohort_level_data["Quarter Cohort"].apply(lambda x: quarter_converter(max(final_report["Source File"]), x))
+    cohort_level_data = cohort_level_data[cohort_level_data["Age"] <= cohort_level_data["Delta"]]
+    cohort_level_data["Penetration"] = cohort_level_data["Total Active Customers"] / cohort_level_data["Total Serviceable Addresses"]
+    standard_curves_to_merge = standard_curve_reader(max(cohort_level_data["Age"]))
+    cohort_level_data = pd.concat([cohort_level_data, standard_curves_to_merge], ignore_index=True)
+    mkt_subset = 'Competitive'
+    cohort_level_data = cohort_level_data[cohort_level_data['Mapped Market Type'] == mkt_subset]
+    average_to_merge = average_builder(cohort_level_data, mkt_subset)
+    cohort_level_data = pd.concat([cohort_level_data, average_to_merge], ignore_index=True)
+    cohort_level_data["Age Labels"] = cohort_level_data["Age"].apply(lambda x: "Month " + str(x))
+    legend_label_order = sorted(cohort_level_data['Quarter Cohort'].unique()[:-3], key=convert_to_datetime) + cohort_level_data['Quarter Cohort'].unique()[-3:].tolist()
+    linewidths = [0.75] * (len(legend_label_order) - non_cohort_labels) + [3.0] * non_cohort_labels
+    colors_to_use = hex_color_codes[:(len(legend_label_order) - non_cohort_labels)] + non_cohort_colors
+
+    plt.figure(figsize=(10, 6))
+    for i, cohort in enumerate(legend_label_order):
+        linewidth = linewidths[i]
+        color = colors_to_use[i]
+        sns.lineplot(data=cohort_level_data[cohort_level_data['Quarter Cohort'] == cohort],
+                     x='Age Labels',
+                     y='Penetration',
+                     ci=None,
+                     linewidth=linewidth,
+                     color=color,
+                     label=cohort)
+    sns.despine(right=True, top=True)
+
+    plt.title('Penetration of ' + mkt_subset + ' Passings by Cohort', fontsize=12, weight='bold')
+    plt.xlabel(None)
+    plt.ylabel(None)
+    plt.legend(loc='lower center', bbox_to_anchor=(0.5, -0.35), ncol=8, fancybox=True, fontsize=9)
+    plt.gca().tick_params(labelsize=9)
+    plt.xticks(rotation=45)
+    plt.gca().yaxis.set_major_formatter(PercentFormatter(1.0, decimals=0))
+    plt.gca().spines['bottom'].set_color('black')
+    plt.gca().spines['left'].set_color('black')
+    plt.grid(axis='y', which='major')
+
+    plt.tight_layout()
+    plt.subplots_adjust(hspace=0.5)
+    # plt.savefig('penetration_line_chart.png')
+    plt.savefig(SAVE_PATH + datetime.now().strftime("%Y.%m.%d_%I%M%p") + '_penetration_line_chart.png')
+    plt.show()
+
 
 def define_market(wcregion):
     if wcregion == 'Inactive':
         return 'Inactive'
-    elif wcregion == '':
+    elif wcregion == '' or wcregion == 'nan':
         return 'Unknown'
     elif wcregion[:3] in ['Virginia', 'BRI', 'CPC', 'DUF']:
         return 'VATN'
@@ -283,6 +349,7 @@ def define_market(wcregion):
     elif wcregion[:3] == 'NGN':
         return 'NGN'
     else:
+        print("Unknown wire center region: " + wcregion)
         return 'Unknown'
 
 
@@ -387,6 +454,94 @@ def replace_with_last_value(df):
         df = df.apply(lambda x: last_value)
 
     return df
+
+
+def are_excel_files_identical(file_path1, file_path2):
+    try:
+        df1 = pd.read_excel(file_path1)
+        df2 = pd.read_excel(file_path2)
+    except Exception as e:
+        print(f"Error reading files: {e}")
+        return False
+
+    if df1.equals(df2):
+        print("The Excel files are identical.")
+        return True
+    else:
+        print("The Excel files are not identical.")
+        return False
+
+
+def quarter_converter(max_date, quarter):
+    if quarter[1] == '1':
+        quarter_end_month = 3
+        quarter_end_day = 31
+    elif quarter[1] == '2':
+        quarter_end_month = 6
+        quarter_end_day = 30
+    elif quarter[1] == '3':
+        quarter_end_month = 9
+        quarter_end_day = 30
+    else:
+        quarter_end_month = 12
+        quarter_end_day = 31
+
+    quarter_end = date(int(str(20) + quarter[-2:]), quarter_end_month, quarter_end_day)
+
+    return math.floor((max_date.year - quarter_end.year) * 12 + (max_date.month - quarter_end.month) + (max_date.day - quarter_end.day) / 30)
+
+
+def standard_curve_reader(max_age):
+    standard_curves = pd.read_excel("C:/Users/alexander.bennett/PycharmProjects/Point Penetration Report/~raw_data/Standard and Underwritten Curves.xlsx")
+    to_merge = pd.DataFrame(columns=['Quarter Cohort', 'Mapped Market Type', 'Age', 'Total Active Customers', 'Total Serviceable Addresses', 'Delta', 'Penetration'])
+    for i in range(0, len(standard_curves)):
+        to_add = pd.DataFrame({
+            'Quarter Cohort': standard_curves['Name'][i],
+            'Mapped Market Type': standard_curves['Market Type'][i],
+            'Age': list(range(1, 1+ max_age)),
+            'Total Active Customers': np.nan * max_age,
+            'Total Serviceable Addresses': np.nan * max_age,
+            'Delta': np.nan * max_age,
+            'Penetration': standard_curves.iloc[i, 2:max_age+2]
+        })
+        to_merge = pd.concat([to_merge, to_add], ignore_index=False)
+    to_merge['Age'] = to_merge['Age'].astype(np.int64)
+    to_merge['Penetration'] = to_merge['Penetration'].astype(float)
+    return to_merge
+
+
+def average_builder(df, mkt_type):
+    df = df.groupby("Age").sum().reset_index()
+    df['Penetration'] = df['Total Active Customers'] / df['Total Serviceable Addresses']
+    to_add = pd.DataFrame({
+        'Quarter Cohort': 'Average',
+        'Mapped Market Type': mkt_type,
+        'Age': list(range(1, 1 + max(df['Age']))),
+        'Total Active Customers': np.nan * max(df['Age']),
+        'Total Serviceable Addresses': np.nan * max(df['Age']),
+        'Delta': np.nan * max(df['Age']),
+        'Penetration': df['Penetration']
+    })
+    to_add['Age'] = to_add['Age'].astype(np.int64)
+    to_add['Penetration'] = to_add['Penetration'].astype(float)
+    return to_add
+
+
+def convert_to_datetime(quarter_str):
+    quarter_str, year_str = quarter_str.split("'")
+    year = int(year_str)
+    quarter = int(quarter_str[1:])
+
+    if quarter == 1:
+        month = 3
+    elif quarter == 2:
+        month = 6
+    elif quarter == 3:
+        month = 9
+    else:
+        month = 12
+
+    return datetime(year, month, 1)
 
 
 if __name__ == '__main__':
