@@ -348,6 +348,8 @@ def define_market(wcregion):
         return 'WMICH'
     elif wcregion[:3] == 'NGN':
         return 'NGN'
+    elif wcregion[:3] == 'MTX':
+        return 'TX'
     else:
         print("Unknown wire center region: " + wcregion)
         return 'Unknown'
