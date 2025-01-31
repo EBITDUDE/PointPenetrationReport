@@ -299,7 +299,7 @@ def main():
         sns.lineplot(data=cohort_level_data[cohort_level_data['Quarter Cohort'] == cohort],
                      x='Age Labels',
                      y='Penetration',
-                     ci=None,
+                     errorbar=None,
                      linewidth=linewidth,
                      color=color,
                      label=cohort)
@@ -328,9 +328,9 @@ def define_market(wcregion):
         return 'Inactive'
     elif wcregion == '' or wcregion == 'nan':
         return 'Unknown'
-    elif wcregion[:3] in ['Virginia', 'BRI', 'CPC', 'DUF']:
+    elif wcregion[:3] in ['Virginia', 'BRI', 'CPC', 'DUF', 'NAL']:
         return 'VATN'
-    elif wcregion[:3] in ['BLD', 'ISL', 'NFL']:
+    elif wcregion[:3] in ['BLD', 'ISL', 'NFL', 'BLR']:
         return 'Island'
     elif wcregion[:3] in ['SWG', 'TAL', 'ALA', 'OPL']:
         return 'ALAGA'
@@ -348,7 +348,7 @@ def define_market(wcregion):
         return 'WMICH'
     elif wcregion[:3] == 'NGN':
         return 'NGN'
-    elif wcregion[:3] == 'MTX':
+    elif wcregion[:3] in ['CTX', 'MTX']:
         return 'TX'
     else:
         print("Unknown wire center region: " + wcregion)
