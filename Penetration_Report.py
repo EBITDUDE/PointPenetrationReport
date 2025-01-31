@@ -12,9 +12,9 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 from matplotlib.ticker import PercentFormatter
 
-RAW_DATA_PATH = "C:/Users/alexander.bennett/PycharmProjects/Point Penetration Report/~raw_data/~from_Box_ASB_rename/"
-MAPPINGS_PATH = "C:/Users/alexander.bennett/PycharmProjects/Point Penetration Report/~raw_data/~mappings"
-SAVE_PATH = "C:/Users/alexander.bennett/PycharmProjects/Point Penetration Report/~outputs/" + datetime.now().strftime("%Y.%m.%d_%I%M%p") + '/'
+RAW_DATA_PATH = "C:/Users/alexander.bennett/PycharmProjects/PointPenetrationReport/~raw_data/~from_Box_ASB_rename/"
+MAPPINGS_PATH = "C:/Users/alexander.bennett/PycharmProjects/PointPenetrationReport/~raw_data/~mappings"
+SAVE_PATH = "C:/Users/alexander.bennett/PycharmProjects/PointPenetrationReport/~outputs/" + datetime.now().strftime("%Y.%m.%d_%I%M%p") + '/'
 
 pd.set_option('display.max_columns', 10)
 pd.set_option('display.width', 250)
@@ -22,7 +22,7 @@ pd.set_option('display.width', 250)
 
 def main():
     startTime = time.time()
-    os.chdir('C:/Users/alexander.bennett/PycharmProjects/Point Penetration Report/~raw_data/~from_Box_ASB_rename')
+    os.chdir('C:/Users/alexander.bennett/PycharmProjects/PointPenetrationReport/~raw_data/~from_Box_ASB_rename')
     # run_rename()
     files = os.listdir()
 
@@ -261,7 +261,7 @@ def main():
 
     # test whether outputs are identical
     # file_path1 = SAVE_PATH + '2023.08.05_0535PM_full_output.xlsx'
-    # file_path2 = "C:/Users/alexander.bennett/PycharmProjects/Point Penetration Report/~outputs/" + '2023.08.02_1201PM/' + '2023.08.02_1202PM_full_output.xlsx'
+    # file_path2 = "C:/Users/alexander.bennett/PycharmProjects/PointPenetrationReport/~outputs/" + '2023.08.02_1201PM/' + '2023.08.02_1202PM_full_output.xlsx'
     # are_excel_files_identical(file_path1, file_path2)
 
     # add quarter identifier to final report dataframe
@@ -356,7 +356,7 @@ def define_market(wcregion):
 
 
 def run_rename():
-    os.chdir('C:/Users/alexander.bennett/PycharmProjects/Point Penetration Report/~raw_data/~from_Box_ASB_rename')
+    os.chdir('C:/Users/alexander.bennett/PycharmProjects/PointPenetrationReport/~raw_data/~from_Box_ASB_rename')
     for filename in os.listdir("."):
         os.rename(filename,
                   str(datetime.fromtimestamp(os.path.getctime(filename)).strftime('%Y-%m-%d') + '.csv'))
@@ -494,7 +494,7 @@ def quarter_converter(max_date, quarter):
 
 
 def standard_curve_reader(max_age):
-    standard_curves = pd.read_excel("C:/Users/alexander.bennett/PycharmProjects/Point Penetration Report/~raw_data/Standard and Underwritten Curves.xlsx")
+    standard_curves = pd.read_excel("C:/Users/alexander.bennett/PycharmProjects/PointPenetrationReport/~raw_data/Standard and Underwritten Curves.xlsx")
     to_merge = pd.DataFrame(columns=['Quarter Cohort', 'Mapped Market Type', 'Age', 'Total Active Customers', 'Total Serviceable Addresses', 'Delta', 'Penetration'])
     for i in range(0, len(standard_curves)):
         to_add = pd.DataFrame({
