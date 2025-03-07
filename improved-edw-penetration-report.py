@@ -12,7 +12,7 @@ from datetime import datetime
 CONFIG = {
     'RAW_DATA_PATH': "C:/Users/alexander.bennett/PycharmProjects/PointPenetrationReport/~EDW_data/",
     'SAVE_PATH_BASE': "C:/Users/alexander.bennett/PycharmProjects/PointPenetrationReport/~outputs/",
-    'RAW_DATA_FILENAME': "GTCR_ServiceLocsAndSubTrend_20250221B.csv",
+    'RAW_DATA_FILENAME': "GTCR_ServiceLocsAndSubTrend_20250306g.csv",
     'CHUNK_SIZE': 10000,  # For processing large files in chunks
     'USE_PARALLEL': False,  # Set to True to enable parallel processing
     'MAX_WORKERS': 4,  # Number of parallel workers (if parallel processing is enabled)
